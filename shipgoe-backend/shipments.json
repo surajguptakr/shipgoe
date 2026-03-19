@@ -1,0 +1,17 @@
+{
+  "SGE123456789": {
+    "id": "SGE123456789",
+    "from": "Andheri East, Mumbai",
+    "to": "Kharadi, Pune",
+    "mode": "SURFACE",
+    "status": "IN_TRANSIT",
+    "eta": "Today, 8–10 PM",
+    "baseRoute": [
+      { "lat": 19.075983, "lng": 72.877655 },
+      { "lat": 19.2183, "lng": 72.9781 },
+      { "lat": 19.076, "lng": 72.998 },
+      { "lat": 19.148, "lng": 73.002 }
+    ]
+  }
+}
+

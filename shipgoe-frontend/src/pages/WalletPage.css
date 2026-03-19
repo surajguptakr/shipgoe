@@ -1,0 +1,71 @@
+.wallet-page {
+  display: grid;
+  gap: 14px;
+}
+
+.wallet-hero h1 {
+  font-size: 28px;
+  margin: 0 0 6px;
+}
+
+.wallet-hero .sub {
+  font-size: 13px;
+  color: #4b5563;
+}
+
+.wallet-card {
+  border-radius: var(--radius);
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  background: rgba(255, 255, 255, 0.96);
+  padding: 18px;
+  box-shadow:
+    0 18px 35px rgba(15, 23, 42, 0.08),
+    0 0 0 1px rgba(148, 163, 184, 0.15);
+}
+
+.wallet-balance .label {
+  font-size: 12px;
+  text-transform: uppercase;
+  color: #6b7280;
+  margin: 0;
+}
+
+.wallet-balance .balance {
+  font-size: 28px;
+  letter-spacing: -0.03em;
+  font-weight: 600;
+  color: #111827;
+  margin: 6px 0 0;
+}
+
+.wallet-actions {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.wallet-actions label {
+  font-size: 12px;
+  text-transform: uppercase;
+  color: #6b7280;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wallet-actions input {
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  padding: 8px 10px;
+  font-size: 14px;
+  min-width: 220px;
+}
+
+.wallet-card .hint {
+  margin-top: 10px;
+  font-size: 11px;
+  color: #9ca3af;
+}
+

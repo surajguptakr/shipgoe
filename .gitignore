@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.DS_Store
+
+# Env files
+.env
+.env.*.local
+
+# Backend DB / local data
+*.sqlite
+*.sqlite-journal
+
+# Zip and imports
+*.zip
+zip-import/
+

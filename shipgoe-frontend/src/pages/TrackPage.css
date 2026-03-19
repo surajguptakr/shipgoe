@@ -1,0 +1,268 @@
+.track-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 2fr);
+  gap: 24px;
+}
+
+.track-left h1 {
+  font-size: 32px;
+  margin-bottom: 6px;
+}
+
+.track-left .sub {
+  font-size: 14px;
+  color: #4b5563;
+  margin-bottom: 16px;
+}
+
+.track-search label {
+  font-size: 12px;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.search-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.search-row input {
+  flex: 1;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+.track-search .hint {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.error-banner {
+  margin-top: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  background: rgba(239, 68, 68, 0.06);
+  color: #991b1b;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.shipment-card {
+  margin-top: 18px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.shipment-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.shipment-header .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #6b7280;
+  margin: 0;
+}
+
+.shipment-header .value {
+  font-size: 15px;
+  font-weight: 500;
+  margin: 2px 0 0;
+}
+
+.chip {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+}
+
+.shipment-route {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0;
+}
+
+.shipment-route .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #6b7280;
+  margin: 0;
+}
+
+.shipment-route .value {
+  font-size: 13px;
+  margin: 2px 0 0;
+}
+
+.shipment-route .arrow {
+  font-size: 18px;
+  color: #9ca3af;
+}
+
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.progress .bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  overflow: hidden;
+}
+
+.progress .fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #4f46e5, #22c55e);
+  transition: width 0.6s ease-out;
+}
+
+.progress .percent {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #4b5563;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #22c55e;
+}
+
+.eta-pill {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.06);
+  color: #1d4ed8;
+}
+
+.timeline {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  border-left: 1px dashed #e5e7eb;
+}
+
+.timeline-item {
+  position: relative;
+  padding-left: 18px;
+  margin-bottom: 10px;
+}
+
+.timeline-item .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 2px solid #e5e7eb;
+  background: #ffffff;
+  position: absolute;
+  left: -6px;
+  top: 4px;
+}
+
+.timeline-item.complete .dot {
+  background: #22c55e;
+  border-color: #16a34a;
+}
+
+.timeline-item.active .dot {
+  background: #4f46e5;
+  border-color: #4f46e5;
+}
+
+.timeline-item .title {
+  font-size: 13px;
+  margin: 0 0 2px;
+}
+
+.timeline-item .meta {
+  font-size: 11px;
+  color: #9ca3af;
+  margin: 0;
+}
+
+.track-map-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.map-card {
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  background: #0f172a;
+}
+
+.map {
+  height: 380px;
+  width: 100%;
+}
+
+.map-empty {
+  height: 380px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 22px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.map-empty .title {
+  font-size: 14px;
+  margin: 0 0 6px;
+}
+
+.map-empty .meta {
+  font-size: 12px;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.map-legend .label {
+  font-size: 12px;
+  text-transform: uppercase;
+  color: #6b7280;
+  margin: 0 0 2px;
+}
+
+.map-legend .meta {
+  font-size: 11px;
+  color: #9ca3af;
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  .track-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
