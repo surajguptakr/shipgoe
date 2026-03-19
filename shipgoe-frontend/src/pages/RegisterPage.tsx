@@ -1,12 +1,15 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import './LoginPage.css'
 
-export function LoginPage() {
+type Role = 'customer' | 'partner'
+
+export function RegisterPage() {
   const auth = useAuth()
   const navigate = useNavigate()
+
+  const [role, setRole] = useState<Role>('customer')
   const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -14,18 +17,34 @@ export function LoginPage() {
   return (
     <div className="auth-page">
       <section className="auth-card">
-        <h1>Customer login</h1>
-        <p className="sub">
-          Sign in to track your Shipgoe parcels, download PODs and manage addresses.
-        </p>
+        <h1>Create account</h1>
+        <p className="sub">Create a Shipgoe account to use wallet and manage orders.</p>
+
+        <div className="auth-tabs">
+          <button
+            type="button"
+            className={role === 'customer' ? 'on' : ''}
+            onClick={() => setRole('customer')}
+          >
+            Customer
+          </button>
+          <button
+            type="button"
+            className={role === 'partner' ? 'on' : ''}
+            onClick={() => setRole('partner')}
+          >
+            Partner
+          </button>
+        </div>
+
         <form
           onSubmit={(e) => {
             e.preventDefault()
             setError(null)
             void auth
-              .login({ role: 'customer', identifier, password })
+              .register({ role, identifier, password })
               .then(() => navigate('/'))
-              .catch((e2) => setError(e2 instanceof Error ? e2.message : 'Login failed'))
+              .catch((e2) => setError(e2 instanceof Error ? e2.message : 'Register failed'))
           }}
         >
           <label>
@@ -40,18 +59,15 @@ export function LoginPage() {
             Password
             <input
               type="password"
-              placeholder="••••••••"
+              placeholder="Minimum 6 characters"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
           </label>
           <button type="submit" className="primary wide">
-            Continue
+            Create account
           </button>
           {error && <p className="helper">{error}</p>}
-          <p className="helper">
-            New to Shipgoe? <Link to="/register">Create an account</Link>
-          </p>
         </form>
       </section>
     </div>

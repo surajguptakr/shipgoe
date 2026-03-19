@@ -42,6 +42,22 @@ export function CheckoutPage() {
         },
       })
       await wallet.refresh()
+      if (method === 'UPI') {
+        const init = await apiFetch<{ gateway: string; ref: string; paymentUrl: string }>(
+          '/api/payments/khalti/initiate',
+          { method: 'POST', auth: true, json: { orderId: res.orderId } },
+        )
+        setMessage(
+          `Order #${res.orderId} created. Proceed to pay via ${init.gateway}. Redirect: ${init.paymentUrl}`,
+        )
+        return
+      }
+      if (method === 'CARD') {
+        setMessage(
+          `Order #${res.orderId} created. Card payments are ready for gateway hookup (add your PSP later).`,
+        )
+        return
+      }
       setMessage(`Order #${res.orderId} created. Status: ${res.status}`)
     } catch (e) {
       setMessage(e instanceof Error ? e.message : 'Failed to place order')

@@ -199,16 +199,131 @@ app.post('/api/orders', authRequired, (req, res) => {
   }
 
   const status =
-    paymentTiming === 'PAY_ON_DELIVERY' ? 'PLACED_COD' : paymentMethod === 'WALLET' ? 'PAID' : 'PENDING_PAYMENT'
+    paymentTiming === 'PAY_ON_DELIVERY'
+      ? 'PLACED_COD'
+      : paymentMethod === 'WALLET'
+        ? 'PAID'
+        : 'PENDING_PAYMENT'
 
   const result = db
     .prepare(
-      `INSERT INTO orders (user_id, flow, amount_npr, payment_timing, payment_method, status)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO orders (user_id, flow, amount_npr, payment_timing, payment_method, status, payment_gateway, payment_status, payment_ref)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(req.user.userId, flow, amountNPR, paymentTiming, paymentMethod, status)
+    .run(
+      req.user.userId,
+      flow,
+      amountNPR,
+      paymentTiming,
+      paymentMethod,
+      status,
+      paymentMethod === 'UPI' ? 'KHALTI' : paymentMethod === 'CARD' ? 'CARD' : paymentMethod,
+      paymentMethod === 'WALLET' ? 'SUCCESS' : paymentTiming === 'PAY_ON_DELIVERY' ? 'PENDING' : 'INITIATED',
+      null,
+    )
 
-  return res.status(201).json({ orderId: result.lastInsertRowid, status })
+  const orderId = Number(result.lastInsertRowid)
+
+  if (paymentTiming === 'PAY_NOW' && paymentMethod !== 'WALLET') {
+    const gateway = paymentMethod === 'UPI' ? 'KHALTI' : paymentMethod === 'CARD' ? 'CARD' : paymentMethod
+    const payment = db
+      .prepare(
+        `INSERT INTO payments (order_id, gateway, amount_npr, status, ref)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(orderId, gateway, amountNPR, 'INITIATED', `PAY-${orderId}-${Date.now()}`)
+
+    return res.status(201).json({
+      orderId,
+      status,
+      payment: { id: Number(payment.lastInsertRowid), gateway, status: 'INITIATED' },
+    })
+  }
+
+  return res.status(201).json({ orderId, status })
+})
+
+// eSewa placeholder initiate + callback
+app.post('/api/payments/esewa/initiate', authRequired, (req, res) => {
+  const schema = z.object({ orderId: z.number().int().positive() })
+  const parsed = schema.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid payload' })
+
+  const order = db
+    .prepare('SELECT id, amount_npr FROM orders WHERE id = ? AND user_id = ?')
+    .get(parsed.data.orderId, req.user.userId)
+  if (!order) return res.status(404).json({ error: 'Order not found' })
+
+  const ref = `ESEWA-${order.id}-${Date.now()}`
+  db.prepare(
+    `INSERT INTO payments (order_id, gateway, amount_npr, status, ref)
+     VALUES (?, 'ESEWA', ?, 'INITIATED', ?)`,
+  ).run(order.id, order.amount_npr, ref)
+
+  // In real integration you return the payment form params + success/failure URLs
+  return res.json({
+    gateway: 'ESEWA',
+    ref,
+    amountNPR: order.amount_npr,
+    successUrl: `${process.env.PUBLIC_API_BASE || `http://localhost:${PORT}`}/api/payments/esewa/callback?ref=${encodeURIComponent(ref)}&status=success`,
+    failureUrl: `${process.env.PUBLIC_API_BASE || `http://localhost:${PORT}`}/api/payments/esewa/callback?ref=${encodeURIComponent(ref)}&status=failed`,
+  })
+})
+
+app.get('/api/payments/esewa/callback', (req, res) => {
+  const ref = String(req.query.ref || '')
+  const status = String(req.query.status || '')
+  if (!ref) return res.status(400).send('Missing ref')
+
+  const payment = db.prepare('SELECT id, order_id FROM payments WHERE ref = ? AND gateway = ?').get(ref, 'ESEWA')
+  if (!payment) return res.status(404).send('Payment not found')
+
+  const nextStatus = status === 'success' ? 'SUCCESS' : 'FAILED'
+  db.prepare(`UPDATE payments SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(nextStatus, payment.id)
+  db.prepare(`UPDATE orders SET payment_status = ?, payment_ref = ? WHERE id = ?`).run(nextStatus, ref, payment.order_id)
+
+  return res.send(`Shipgoe payment ${nextStatus}`)
+})
+
+// Khalti placeholder initiate + verify
+app.post('/api/payments/khalti/initiate', authRequired, (req, res) => {
+  const schema = z.object({ orderId: z.number().int().positive() })
+  const parsed = schema.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid payload' })
+
+  const order = db
+    .prepare('SELECT id, amount_npr FROM orders WHERE id = ? AND user_id = ?')
+    .get(parsed.data.orderId, req.user.userId)
+  if (!order) return res.status(404).json({ error: 'Order not found' })
+
+  const ref = `KHALTI-${order.id}-${Date.now()}`
+  db.prepare(
+    `INSERT INTO payments (order_id, gateway, amount_npr, status, ref)
+     VALUES (?, 'KHALTI', ?, 'INITIATED', ?)`,
+  ).run(order.id, order.amount_npr, ref)
+
+  return res.json({
+    gateway: 'KHALTI',
+    ref,
+    amountNPR: order.amount_npr,
+    // In real integration: return pidx/payment_url from Khalti.
+    paymentUrl: `https://khalti.com/#/pay?ref=${encodeURIComponent(ref)}`,
+  })
+})
+
+app.post('/api/payments/khalti/verify', authRequired, (req, res) => {
+  const schema = z.object({ ref: z.string().min(1), status: z.enum(['success', 'failed']) })
+  const parsed = schema.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid payload' })
+
+  const payment = db.prepare('SELECT id, order_id FROM payments WHERE ref = ? AND gateway = ?').get(parsed.data.ref, 'KHALTI')
+  if (!payment) return res.status(404).json({ error: 'Payment not found' })
+
+  const nextStatus = parsed.data.status === 'success' ? 'SUCCESS' : 'FAILED'
+  db.prepare(`UPDATE payments SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(nextStatus, payment.id)
+  db.prepare(`UPDATE orders SET payment_status = ?, payment_ref = ? WHERE id = ?`).run(nextStatus, parsed.data.ref, payment.order_id)
+
+  return res.json({ ok: true, paymentStatus: nextStatus })
 })
 
 app.get('/api/tracking/shipments/:id', (req, res) => {

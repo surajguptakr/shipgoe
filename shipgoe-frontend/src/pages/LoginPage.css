@@ -61,3 +61,25 @@
   color: #9ca3af;
 }
 
+.auth-tabs {
+  display: inline-flex;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  overflow: hidden;
+  margin: 6px 0 12px;
+}
+
+.auth-tabs button {
+  border: none;
+  background: transparent;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.auth-tabs button.on {
+  background: rgba(79, 70, 229, 0.12);
+  color: #3730a3;
+  font-weight: 500;
+}
+

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import './LoginPage.css'
 
@@ -48,6 +49,9 @@ export function PartnerLoginPage() {
             Continue
           </button>
           {error && <p className="helper">{error}</p>}
+          <p className="helper">
+            Need an account? <Link to="/register">Create one</Link>
+          </p>
         </form>
       </section>
     </div>

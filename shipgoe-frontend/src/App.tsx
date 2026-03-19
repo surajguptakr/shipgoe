@@ -9,11 +9,14 @@ import { PartnerLoginPage } from './pages/PartnerLoginPage'
 import { WalletPage } from './pages/WalletPage'
 import { CheckoutPage } from './pages/CheckoutPage'
 import { useWallet } from './wallet/WalletContext'
+import { useAuth } from './auth/AuthContext'
+import { RegisterPage } from './pages/RegisterPage'
 
 function AppShell() {
   const [navOpen, setNavOpen] = useState(false)
   const navigate = useNavigate()
   const wallet = useWallet()
+  const auth = useAuth()
 
   return (
     <div className="app-root">
@@ -49,12 +52,22 @@ function AppShell() {
           <button className="wallet-pill" onClick={() => navigate('/wallet')}>
             Wallet: NPR {wallet.state.balanceNPR.toLocaleString()}
           </button>
-          <button className="ghost" onClick={() => navigate('/partner-login')}>
-            Partner login
-          </button>
-          <button className="primary" onClick={() => navigate('/login')}>
-            Customer login
-          </button>
+          {auth.state.kind === 'authenticated' ? (
+            <>
+              <button className="ghost" onClick={() => auth.logout()}>
+                Logout
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="ghost" onClick={() => navigate('/partner-login')}>
+                Partner login
+              </button>
+              <button className="primary" onClick={() => navigate('/login')}>
+                Customer login
+              </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -65,6 +78,7 @@ function AppShell() {
           <Route path="/quick" element={<QuickCommercePage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/partner-login" element={<PartnerLoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
           <Route path="/wallet" element={<WalletPage />} />
           <Route path="/checkout" element={<CheckoutPage />} />
         </Routes>
