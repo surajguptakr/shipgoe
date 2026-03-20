@@ -1,8 +1,10 @@
 type Json = Record<string, unknown> | unknown[] | string | number | boolean | null
 
 function apiBase(): string {
-  const raw = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8081'
-  return raw.replace(/\/+$/, '')
+  const rawEnv = import.meta.env.VITE_API_BASE as string | undefined
+  const raw =
+    rawEnv && rawEnv.trim().length > 0 ? rawEnv : (undefined as string | undefined)
+  return (raw ?? 'http://localhost:8081').replace(/\/+$/, '')
 }
 
 export function getToken(): string | null {
