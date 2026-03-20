@@ -4,13 +4,11 @@ const express = require('express')
 const cors = require('cors')
 const bcrypt = require('bcryptjs')
 const { z } = require('zod')
-const { db, initDb } = require('./db')
+const { pool, initDb } = require('./db')
 const { signToken, authRequired } = require('./auth')
 
 const app = express()
 const PORT = process.env.PORT || 8081
-
-initDb()
 
 app.use(
   cors({
@@ -92,25 +90,31 @@ app.post('/api/auth/register', (req, res) => {
 
   const password_hash = bcrypt.hashSync(password, 10)
 
-  try {
-    const stmt = db.prepare(
-      `INSERT INTO users (role, email, phone, password_hash)
-       VALUES (@role, @email, @phone, @password_hash)`,
-    )
-    const result = stmt.run({ role, email: email ?? null, phone: phone ?? null, password_hash })
+  ;(async () => {
+    try {
+      const result = await pool.query(
+        `INSERT INTO users (role, email, phone, password_hash)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id`,
+        [role, email ?? null, phone ?? null, password_hash],
+      )
+      const userId = Number(result.rows[0].id)
 
-    db.prepare('INSERT OR IGNORE INTO wallets (user_id, balance_npr) VALUES (?, ?)').run(
-      result.lastInsertRowid,
-      0,
-    )
+      await pool.query(
+        `INSERT INTO wallets (user_id, balance_npr)
+         VALUES ($1, 0)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [userId],
+      )
 
-    const token = signToken({ userId: result.lastInsertRowid, role })
-    return res.status(201).json({ token })
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : 'Failed'
-    if (msg.includes('UNIQUE')) return res.status(409).json({ error: 'User already exists' })
-    return res.status(500).json({ error: 'Failed to register' })
-  }
+      const token = signToken({ userId, role })
+      return res.status(201).json({ token })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed'
+      if (msg.includes('duplicate key')) return res.status(409).json({ error: 'User already exists' })
+      return res.status(500).json({ error: 'Failed to register' })
+    }
+  })()
 })
 
 app.post('/api/auth/login', (req, res) => {
@@ -119,35 +123,45 @@ app.post('/api/auth/login', (req, res) => {
   const { email, phone, password } = parsed.data
   if (!email && !phone) return res.status(400).json({ error: 'email or phone required' })
 
-  const user = db
-    .prepare(
+  ;(async () => {
+    const result = await pool.query(
       `SELECT id, role, email, phone, password_hash
        FROM users
-       WHERE (email = @email AND @email IS NOT NULL)
-          OR (phone = @phone AND @phone IS NOT NULL)
+       WHERE ($1::text IS NOT NULL AND email = $1)
+          OR ($2::text IS NOT NULL AND phone = $2)
        LIMIT 1`,
+      [email ?? null, phone ?? null],
     )
-    .get({ email: email ?? null, phone: phone ?? null })
+    const user = result.rows[0]
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' })
+    const ok = bcrypt.compareSync(password, user.password_hash)
+    if (!ok) return res.status(401).json({ error: 'Invalid credentials' })
 
-  if (!user) return res.status(401).json({ error: 'Invalid credentials' })
-  const ok = bcrypt.compareSync(password, user.password_hash)
-  if (!ok) return res.status(401).json({ error: 'Invalid credentials' })
-
-  const token = signToken({ userId: user.id, role: user.role })
-  return res.json({ token })
+    const token = signToken({ userId: Number(user.id), role: user.role })
+    return res.json({ token })
+  })().catch(() => res.status(500).json({ error: 'Login failed' }))
 })
 
 app.get('/api/me', authRequired, (req, res) => {
-  const user = db
-    .prepare('SELECT id, role, email, phone, created_at FROM users WHERE id = ?')
-    .get(req.user.userId)
-  if (!user) return res.status(404).json({ error: 'User not found' })
-  return res.json({ user })
+  ;(async () => {
+    const result = await pool.query(
+      'SELECT id, role, email, phone, created_at FROM users WHERE id = $1',
+      [req.user.userId],
+    )
+    const user = result.rows[0]
+    if (!user) return res.status(404).json({ error: 'User not found' })
+    return res.json({ user })
+  })().catch(() => res.status(500).json({ error: 'Failed' }))
 })
 
 app.get('/api/wallet', authRequired, (req, res) => {
-  const row = db.prepare('SELECT balance_npr FROM wallets WHERE user_id = ?').get(req.user.userId)
-  return res.json({ balanceNPR: row?.balance_npr ?? 0 })
+  ;(async () => {
+    const result = await pool.query('SELECT balance_npr FROM wallets WHERE user_id = $1', [
+      req.user.userId,
+    ])
+    const row = result.rows[0]
+    return res.json({ balanceNPR: row?.balance_npr ?? 0 })
+  })().catch(() => res.status(500).json({ error: 'Failed' }))
 })
 
 app.post('/api/wallet/topup', authRequired, (req, res) => {
@@ -156,13 +170,19 @@ app.post('/api/wallet/topup', authRequired, (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: 'Invalid payload' })
   const { amountNPR } = parsed.data
 
-  db.prepare(
-    `INSERT INTO wallets (user_id, balance_npr) VALUES (?, ?)
-     ON CONFLICT(user_id) DO UPDATE SET balance_npr = balance_npr + excluded.balance_npr, updated_at = datetime('now')`,
-  ).run(req.user.userId, amountNPR)
-
-  const row = db.prepare('SELECT balance_npr FROM wallets WHERE user_id = ?').get(req.user.userId)
-  return res.json({ balanceNPR: row.balance_npr })
+  ;(async () => {
+    await pool.query(
+      `INSERT INTO wallets (user_id, balance_npr)
+       VALUES ($1, $2)
+       ON CONFLICT (user_id)
+       DO UPDATE SET balance_npr = wallets.balance_npr + EXCLUDED.balance_npr, updated_at = now()`,
+      [req.user.userId, amountNPR],
+    )
+    const result = await pool.query('SELECT balance_npr FROM wallets WHERE user_id = $1', [
+      req.user.userId,
+    ])
+    return res.json({ balanceNPR: result.rows[0].balance_npr })
+  })().catch(() => res.status(500).json({ error: 'Failed' }))
 })
 
 app.post('/api/orders', authRequired, (req, res) => {
@@ -190,12 +210,7 @@ app.post('/api/orders', authRequired, (req, res) => {
   }
 
   if (paymentTiming === 'PAY_NOW' && paymentMethod === 'WALLET') {
-    const row = db.prepare('SELECT balance_npr FROM wallets WHERE user_id = ?').get(req.user.userId)
-    const bal = row?.balance_npr ?? 0
-    if (bal < amountNPR) return res.status(400).json({ error: 'Insufficient wallet balance' })
-    db.prepare(
-      'UPDATE wallets SET balance_npr = balance_npr - ?, updated_at = datetime(\'now\') WHERE user_id = ?',
-    ).run(amountNPR, req.user.userId)
+    // Handled in transaction below for atomicity
   }
 
   const status =
@@ -205,42 +220,66 @@ app.post('/api/orders', authRequired, (req, res) => {
         ? 'PAID'
         : 'PENDING_PAYMENT'
 
-  const result = db
-    .prepare(
-      `INSERT INTO orders (user_id, flow, amount_npr, payment_timing, payment_method, status, payment_gateway, payment_status, payment_ref)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      req.user.userId,
-      flow,
-      amountNPR,
-      paymentTiming,
-      paymentMethod,
-      status,
-      paymentMethod === 'UPI' ? 'KHALTI' : paymentMethod === 'CARD' ? 'CARD' : paymentMethod,
-      paymentMethod === 'WALLET' ? 'SUCCESS' : paymentTiming === 'PAY_ON_DELIVERY' ? 'PENDING' : 'INITIATED',
-      null,
-    )
+  ;(async () => {
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
 
-  const orderId = Number(result.lastInsertRowid)
+      if (paymentTiming === 'PAY_NOW' && paymentMethod === 'WALLET') {
+        const balRes = await client.query('SELECT balance_npr FROM wallets WHERE user_id = $1 FOR UPDATE', [
+          req.user.userId,
+        ])
+        const bal = balRes.rows[0]?.balance_npr ?? 0
+        if (bal < amountNPR) {
+          await client.query('ROLLBACK')
+          return res.status(400).json({ error: 'Insufficient wallet balance' })
+        }
+        await client.query('UPDATE wallets SET balance_npr = balance_npr - $1, updated_at = now() WHERE user_id = $2', [
+          amountNPR,
+          req.user.userId,
+        ])
+      }
 
-  if (paymentTiming === 'PAY_NOW' && paymentMethod !== 'WALLET') {
-    const gateway = paymentMethod === 'UPI' ? 'KHALTI' : paymentMethod === 'CARD' ? 'CARD' : paymentMethod
-    const payment = db
-      .prepare(
-        `INSERT INTO payments (order_id, gateway, amount_npr, status, ref)
-         VALUES (?, ?, ?, ?, ?)`,
+      const gateway =
+        paymentMethod === 'UPI' ? 'KHALTI' : paymentMethod === 'CARD' ? 'CARD' : paymentMethod
+      const paymentStatus =
+        paymentMethod === 'WALLET' ? 'SUCCESS' : paymentTiming === 'PAY_ON_DELIVERY' ? 'PENDING' : 'INITIATED'
+
+      const orderRes = await client.query(
+        `INSERT INTO orders (user_id, flow, amount_npr, payment_timing, payment_method, status, payment_gateway, payment_status, payment_ref)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         RETURNING id`,
+        [req.user.userId, flow, amountNPR, paymentTiming, paymentMethod, status, gateway, paymentStatus, null],
       )
-      .run(orderId, gateway, amountNPR, 'INITIATED', `PAY-${orderId}-${Date.now()}`)
+      const orderId = Number(orderRes.rows[0].id)
 
-    return res.status(201).json({
-      orderId,
-      status,
-      payment: { id: Number(payment.lastInsertRowid), gateway, status: 'INITIATED' },
-    })
-  }
+      if (paymentTiming === 'PAY_NOW' && paymentMethod !== 'WALLET') {
+        const ref = `PAY-${orderId}-${Date.now()}`
+        const payRes = await client.query(
+          `INSERT INTO payments (order_id, gateway, amount_npr, status, ref)
+           VALUES ($1,$2,$3,$4,$5)
+           RETURNING id`,
+          [orderId, gateway, amountNPR, 'INITIATED', ref],
+        )
+        await client.query('COMMIT')
+        return res.status(201).json({
+          orderId,
+          status,
+          payment: { id: Number(payRes.rows[0].id), gateway, status: 'INITIATED', ref },
+        })
+      }
 
-  return res.status(201).json({ orderId, status })
+      await client.query('COMMIT')
+      return res.status(201).json({ orderId, status })
+    } catch {
+      try {
+        await pool.query('ROLLBACK')
+      } catch {}
+      return res.status(500).json({ error: 'Failed to create order' })
+    } finally {
+      client.release()
+    }
+  })()
 })
 
 // eSewa placeholder initiate + callback
@@ -249,25 +288,30 @@ app.post('/api/payments/esewa/initiate', authRequired, (req, res) => {
   const parsed = schema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ error: 'Invalid payload' })
 
-  const order = db
-    .prepare('SELECT id, amount_npr FROM orders WHERE id = ? AND user_id = ?')
-    .get(parsed.data.orderId, req.user.userId)
-  if (!order) return res.status(404).json({ error: 'Order not found' })
+  ;(async () => {
+    const orderRes = await pool.query('SELECT id, amount_npr FROM orders WHERE id = $1 AND user_id = $2', [
+      parsed.data.orderId,
+      req.user.userId,
+    ])
+    const order = orderRes.rows[0]
+    if (!order) return res.status(404).json({ error: 'Order not found' })
 
-  const ref = `ESEWA-${order.id}-${Date.now()}`
-  db.prepare(
-    `INSERT INTO payments (order_id, gateway, amount_npr, status, ref)
-     VALUES (?, 'ESEWA', ?, 'INITIATED', ?)`,
-  ).run(order.id, order.amount_npr, ref)
+    const ref = `ESEWA-${order.id}-${Date.now()}`
+    await pool.query(
+      `INSERT INTO payments (order_id, gateway, amount_npr, status, ref)
+       VALUES ($1, 'ESEWA', $2, 'INITIATED', $3)`,
+      [order.id, order.amount_npr, ref],
+    )
 
-  // In real integration you return the payment form params + success/failure URLs
-  return res.json({
-    gateway: 'ESEWA',
-    ref,
-    amountNPR: order.amount_npr,
-    successUrl: `${process.env.PUBLIC_API_BASE || `http://localhost:${PORT}`}/api/payments/esewa/callback?ref=${encodeURIComponent(ref)}&status=success`,
-    failureUrl: `${process.env.PUBLIC_API_BASE || `http://localhost:${PORT}`}/api/payments/esewa/callback?ref=${encodeURIComponent(ref)}&status=failed`,
-  })
+    // In real integration you return the payment form params + success/failure URLs
+    return res.json({
+      gateway: 'ESEWA',
+      ref,
+      amountNPR: order.amount_npr,
+      successUrl: `${process.env.PUBLIC_API_BASE || `http://localhost:${PORT}`}/api/payments/esewa/callback?ref=${encodeURIComponent(ref)}&status=success`,
+      failureUrl: `${process.env.PUBLIC_API_BASE || `http://localhost:${PORT}`}/api/payments/esewa/callback?ref=${encodeURIComponent(ref)}&status=failed`,
+    })
+  })().catch(() => res.status(500).json({ error: 'Failed' }))
 })
 
 app.get('/api/payments/esewa/callback', (req, res) => {
@@ -275,14 +319,27 @@ app.get('/api/payments/esewa/callback', (req, res) => {
   const status = String(req.query.status || '')
   if (!ref) return res.status(400).send('Missing ref')
 
-  const payment = db.prepare('SELECT id, order_id FROM payments WHERE ref = ? AND gateway = ?').get(ref, 'ESEWA')
-  if (!payment) return res.status(404).send('Payment not found')
+  ;(async () => {
+    const payRes = await pool.query('SELECT id, order_id FROM payments WHERE ref = $1 AND gateway = $2', [
+      ref,
+      'ESEWA',
+    ])
+    const payment = payRes.rows[0]
+    if (!payment) return res.status(404).send('Payment not found')
 
-  const nextStatus = status === 'success' ? 'SUCCESS' : 'FAILED'
-  db.prepare(`UPDATE payments SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(nextStatus, payment.id)
-  db.prepare(`UPDATE orders SET payment_status = ?, payment_ref = ? WHERE id = ?`).run(nextStatus, ref, payment.order_id)
+    const nextStatus = status === 'success' ? 'SUCCESS' : 'FAILED'
+    await pool.query(`UPDATE payments SET status = $1, updated_at = now() WHERE id = $2`, [
+      nextStatus,
+      payment.id,
+    ])
+    await pool.query(`UPDATE orders SET payment_status = $1, payment_ref = $2 WHERE id = $3`, [
+      nextStatus,
+      ref,
+      payment.order_id,
+    ])
 
-  return res.send(`Shipgoe payment ${nextStatus}`)
+    return res.send(`Shipgoe payment ${nextStatus}`)
+  })().catch(() => res.status(500).send('Failed'))
 })
 
 // Khalti placeholder initiate + verify
@@ -291,24 +348,29 @@ app.post('/api/payments/khalti/initiate', authRequired, (req, res) => {
   const parsed = schema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ error: 'Invalid payload' })
 
-  const order = db
-    .prepare('SELECT id, amount_npr FROM orders WHERE id = ? AND user_id = ?')
-    .get(parsed.data.orderId, req.user.userId)
-  if (!order) return res.status(404).json({ error: 'Order not found' })
+  ;(async () => {
+    const orderRes = await pool.query('SELECT id, amount_npr FROM orders WHERE id = $1 AND user_id = $2', [
+      parsed.data.orderId,
+      req.user.userId,
+    ])
+    const order = orderRes.rows[0]
+    if (!order) return res.status(404).json({ error: 'Order not found' })
 
-  const ref = `KHALTI-${order.id}-${Date.now()}`
-  db.prepare(
-    `INSERT INTO payments (order_id, gateway, amount_npr, status, ref)
-     VALUES (?, 'KHALTI', ?, 'INITIATED', ?)`,
-  ).run(order.id, order.amount_npr, ref)
+    const ref = `KHALTI-${order.id}-${Date.now()}`
+    await pool.query(
+      `INSERT INTO payments (order_id, gateway, amount_npr, status, ref)
+       VALUES ($1, 'KHALTI', $2, 'INITIATED', $3)`,
+      [order.id, order.amount_npr, ref],
+    )
 
-  return res.json({
-    gateway: 'KHALTI',
-    ref,
-    amountNPR: order.amount_npr,
-    // In real integration: return pidx/payment_url from Khalti.
-    paymentUrl: `https://khalti.com/#/pay?ref=${encodeURIComponent(ref)}`,
-  })
+    return res.json({
+      gateway: 'KHALTI',
+      ref,
+      amountNPR: order.amount_npr,
+      // In real integration: return pidx/payment_url from Khalti.
+      paymentUrl: `https://khalti.com/#/pay?ref=${encodeURIComponent(ref)}`,
+    })
+  })().catch(() => res.status(500).json({ error: 'Failed' }))
 })
 
 app.post('/api/payments/khalti/verify', authRequired, (req, res) => {
@@ -316,14 +378,27 @@ app.post('/api/payments/khalti/verify', authRequired, (req, res) => {
   const parsed = schema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ error: 'Invalid payload' })
 
-  const payment = db.prepare('SELECT id, order_id FROM payments WHERE ref = ? AND gateway = ?').get(parsed.data.ref, 'KHALTI')
-  if (!payment) return res.status(404).json({ error: 'Payment not found' })
+  ;(async () => {
+    const payRes = await pool.query('SELECT id, order_id FROM payments WHERE ref = $1 AND gateway = $2', [
+      parsed.data.ref,
+      'KHALTI',
+    ])
+    const payment = payRes.rows[0]
+    if (!payment) return res.status(404).json({ error: 'Payment not found' })
 
-  const nextStatus = parsed.data.status === 'success' ? 'SUCCESS' : 'FAILED'
-  db.prepare(`UPDATE payments SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(nextStatus, payment.id)
-  db.prepare(`UPDATE orders SET payment_status = ?, payment_ref = ? WHERE id = ?`).run(nextStatus, parsed.data.ref, payment.order_id)
+    const nextStatus = parsed.data.status === 'success' ? 'SUCCESS' : 'FAILED'
+    await pool.query(`UPDATE payments SET status = $1, updated_at = now() WHERE id = $2`, [
+      nextStatus,
+      payment.id,
+    ])
+    await pool.query(`UPDATE orders SET payment_status = $1, payment_ref = $2 WHERE id = $3`, [
+      nextStatus,
+      parsed.data.ref,
+      payment.order_id,
+    ])
 
-  return res.json({ ok: true, paymentStatus: nextStatus })
+    return res.json({ ok: true, paymentStatus: nextStatus })
+  })().catch(() => res.status(500).json({ error: 'Failed' }))
 })
 
 app.get('/api/tracking/shipments/:id', (req, res) => {
@@ -365,7 +440,15 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true })
 })
 
-app.listen(PORT, () => {
-  console.log(`Shipgoe backend listening on http://localhost:${PORT}`)
+async function start() {
+  await initDb()
+  app.listen(PORT, () => {
+    console.log(`Shipgoe backend listening on http://localhost:${PORT}`)
+  })
+}
+
+start().catch((e) => {
+  console.error('Failed to start server', e)
+  process.exit(1)
 })
 
