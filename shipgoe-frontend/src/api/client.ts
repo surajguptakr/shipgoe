@@ -1,10 +1,10 @@
 type Json = Record<string, unknown> | unknown[] | string | number | boolean | null
 
 function apiBase(): string {
-  const rawEnv = import.meta.env.VITE_API_BASE as string | undefined
+  const rawEnv = import.meta.env.VITE_AUTH_API_BASE as string | undefined
   const raw =
     rawEnv && rawEnv.trim().length > 0 ? rawEnv : (undefined as string | undefined)
-  return (raw ?? 'http://localhost:8081').replace(/\/+$/, '')
+  return (raw ?? 'https://shipgoe.onrender.com').replace(/\/+$/, '')
 }
 
 export function getToken(): string | null {
