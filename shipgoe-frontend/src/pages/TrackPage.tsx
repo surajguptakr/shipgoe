@@ -1,207 +1,152 @@
-import { useMemo, useState } from 'react'
-import { MapContainer, Marker, Polyline, TileLayer } from 'react-leaflet'
-import type { LatLngExpression } from 'leaflet'
-import 'leaflet/dist/leaflet.css'
+import { useState, useEffect, useRef, type FormEvent } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import './TrackPage.css'
-import { useLiveShipment } from '../hooks/useLiveShipment'
-import type { TrackingShipment } from '../api/tracking'
 
-function mapMode(mode: TrackingShipment['mode']): string {
-  if (mode === 'AIR') return 'Air'
-  if (mode === 'HYPERLOCAL') return 'Hyperlocal'
-  return 'Surface'
+type TrackingStatus = 'ORDER_PLACED' | 'PICKED_UP' | 'IN_TRANSIT' | 'ARRIVED_AT_HUB' | 'OUT_FOR_DELIVERY' | 'DELIVERED'
+type TrackingEvent = { at: string; code: TrackingStatus; label: string; message?: string; location?: string }
+type TrackingPosition = { at: string; lat: number; lng: number; speedKph?: number }
+type TrackingShipment = {
+  id: string; awb: string; from: string; to: string
+  mode: 'SURFACE' | 'AIR' | 'HYPERLOCAL'
+  status: TrackingStatus; eta?: string
+  positions: TrackingPosition[]; events: TrackingEvent[]
 }
 
-function mapStatusLabel(code: TrackingShipment['status']): string {
-  switch (code) {
-    case 'ORDER_PLACED':
-      return 'Order placed'
-    case 'PICKED_UP':
-      return 'Picked up'
-    case 'IN_TRANSIT':
-      return 'In transit'
-    case 'ARRIVED_AT_HUB':
-      return 'Arrived at hub'
-    case 'OUT_FOR_DELIVERY':
-      return 'Out for delivery'
-    case 'DELIVERED':
-      return 'Delivered'
-    default:
-      return 'In transit'
-  }
+const STATUS_LABELS: Record<TrackingStatus, string> = {
+  ORDER_PLACED: 'Order Placed', PICKED_UP: 'Picked Up',
+  IN_TRANSIT: 'In Transit', ARRIVED_AT_HUB: 'Arrived at Hub',
+  OUT_FOR_DELIVERY: 'Out for Delivery', DELIVERED: 'Delivered'
+}
+const STATUS_ORDER: TrackingStatus[] = [
+  'ORDER_PLACED','PICKED_UP','IN_TRANSIT','ARRIVED_AT_HUB','OUT_FOR_DELIVERY','DELIVERED'
+]
+const API = (import.meta.env.VITE_TRACKING_API_BASE as string ?? '').replace(/\/+$/, '')
+
+async function fetchShipment(awb: string): Promise<TrackingShipment> {
+  const res = await fetch(`${API}/api/tracking/shipments/${encodeURIComponent(awb)}`)
+  const data = await res.json()
+  if (!res.ok) throw new Error(data?.message ?? 'Shipment not found.')
+  return data
 }
 
-function statusOrder(): string[] {
-  return [
-    'Order placed',
-    'Picked up',
-    'In transit',
-    'Arrived at hub',
-    'Out for delivery',
-    'Delivered',
-  ]
-}
-
-function computeProgress(statusLabel: string): number {
-  const steps = statusOrder()
-  const idx = steps.indexOf(statusLabel)
-  if (idx < 0) return 10
-  return Math.round((idx / (steps.length - 1)) * 100)
-}
-
-function toLatLng(route: TrackingShipment['positions']): LatLngExpression[] {
-  return route.map((p) => [p.lat, p.lng] as LatLngExpression)
+async function fetchLivePosition(id: string): Promise<TrackingPosition | null> {
+  try {
+    const res = await fetch(`${API}/api/tracking/shipments/${id}/position`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('shipgoe_auth_token') ?? ''}` }
+    })
+    if (!res.ok) return null
+    return await res.json()
+  } catch { return null }
 }
 
 export function TrackPage() {
-  const [awb, setAwb] = useState('SGE123456789')
-  const live = useLiveShipment({ pollMs: 4000 })
+  const [params, setParams] = useSearchParams()
+  const [query, setQuery] = useState(params.get('awb') ?? '')
+  const [shipment, setShipment] = useState<TrackingShipment | null>(null)
+  const [livePos, setLivePos] = useState<TrackingPosition | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const shipment: TrackingShipment | null =
-    live.state.kind === 'ready' ? live.state.shipment : null
+  async function track(awb: string) {
+    if (!awb.trim()) return
+    setLoading(true); setError(null); setShipment(null); setLivePos(null)
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+    try {
+      const data = await fetchShipment(awb.trim())
+      setShipment(data)
+      setParams({ awb: awb.trim() })
+      if (data.status !== 'DELIVERED') {
+        pollRef.current = setInterval(async () => {
+          const pos = await fetchLivePosition(data.id)
+          if (pos) setLivePos(pos)
+        }, 20000)
+      }
+    } catch (err: unknown) {
+      setError((err as Error).message ?? 'Shipment not found.')
+    } finally { setLoading(false) }
+  }
 
-  const positions = shipment?.positions?.length ? toLatLng(shipment.positions) : null
-  const route = positions ?? []
-  const statusLabel = shipment ? mapStatusLabel(shipment.status) : 'In transit'
-  const progress = shipment ? computeProgress(statusLabel) : 0
+  useEffect(() => {
+    const awb = params.get('awb')
+    if (awb) track(awb)
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
+  }, [])
 
-  const activePosition = useMemo(() => {
-    if (route.length >= 1) return route[route.length - 1]
-    return [19.075983, 72.877655] as LatLngExpression
-  }, [route])
+  const stepIdx = shipment ? STATUS_ORDER.indexOf(shipment.status) : -1
 
   return (
-    <div className="track-layout">
-      <section className="track-left">
-        <h1>Track your shipment</h1>
-        <p className="sub">
-          Live map updates, courier‑style events, and a single Shipgoe tracking ID.
-        </p>
+    <div className="track-page">
+      <h1>Track shipment</h1>
+      <p className="track-sub">Enter your AWB number or shipment ID</p>
 
-        <div className="track-search">
-          <label htmlFor="awb">Enter AWB / Order ID</label>
-          <div className="search-row">
-            <input
-              id="awb"
-              placeholder="e.g. SGE123456789"
-              value={awb}
-              onChange={(e) => setAwb(e.target.value)}
-            />
-            <button
-              className="primary"
-              onClick={() => live.load(awb)}
-              disabled={live.state.kind === 'loading'}
-            >
-              {live.state.kind === 'loading' ? 'Tracking…' : 'Track'}
-            </button>
-          </div>
-          <p className="hint">
-            {import.meta.env.VITE_TRACKING_API_BASE
-              ? 'Connected to your Shipgoe tracking API.'
-              : 'Set VITE_TRACKING_API_BASE to connect this page to your Shipgoe tracking API.'}
-          </p>
-        </div>
+      <form className="track-form" onSubmit={(e: FormEvent) => { e.preventDefault(); track(query) }}>
+        <input className="track-input" type="text"
+          placeholder="e.g. SG-2025-001234" value={query}
+          onChange={(e) => setQuery(e.target.value)} />
+        <button className="track-btn" type="submit" disabled={loading || !query.trim()}>
+          {loading ? 'Tracking…' : 'Track'}
+        </button>
+      </form>
 
-        {live.state.kind === 'error' && (
-          <div className="error-banner">
-            <strong>Tracking error.</strong> {live.state.message}
-          </div>
-        )}
+      {error && <div className="track-error">{error}</div>}
 
-        <div className="shipment-card">
-          <div className="shipment-header">
+      {shipment && (
+        <div className="track-result">
+          <div className="track-header">
             <div>
-              <p className="label">Shipgoe ID</p>
-              <p className="value">{(shipment?.id ?? awb.trim()) || '—'}</p>
+              <div className="track-awb">{shipment.awb ?? shipment.id}</div>
+              <div className="track-route">{shipment.from} → {shipment.to}</div>
             </div>
-            <div className="chip">{shipment ? mapMode(shipment.mode) : '—'}</div>
+            <span className={`track-mode-badge track-mode-${shipment.mode.toLowerCase()}`}>
+              {shipment.mode === 'HYPERLOCAL' ? '⚡ 10-min' : shipment.mode}
+            </span>
           </div>
-          <div className="shipment-route">
-            <div>
-              <p className="label">From</p>
-              <p className="value">{shipment?.from ?? '—'}</p>
-            </div>
-            <div className="arrow">→</div>
-            <div>
-              <p className="label">To</p>
-              <p className="value">{shipment?.to ?? '—'}</p>
-            </div>
-          </div>
-          <div className="progress">
-            <div className="bar">
-              <div className="fill" style={{ width: `${progress}%` }} />
-            </div>
-            <span className="percent">{progress}%</span>
-          </div>
-          <div className="status-row">
-            <span className="status-dot" />
-            <span className="status-text">{statusLabel}</span>
-            <span className="eta-pill">ETA: {shipment?.eta ?? '—'}</span>
-          </div>
-        </div>
 
-        <ol className="timeline">
-          {statusOrder().map((label) => {
-            const isActive = label === statusLabel
-            const isComplete =
-              statusOrder().indexOf(label) < statusOrder().indexOf(statusLabel)
-            return (
-              <li
-                key={label}
-                className={`timeline-item${isActive ? ' active' : ''}${
-                  isComplete ? ' complete' : ''
-                }`}
-              >
-                <div className="dot" />
-                <div className="content">
-                  <p className="title">{label}</p>
-                  <p className="meta">
-                    {live.state.kind === 'ready'
-                      ? `Updated ${Math.round((Date.now() - live.state.lastUpdatedAt) / 1000)}s ago`
-                      : 'Auto‑updated from Shipgoe network'}
-                  </p>
-                </div>
-              </li>
-            )
-          })}
-        </ol>
-      </section>
+          <div className="track-progress">
+            {STATUS_ORDER.map((status, i) => (
+              <div key={status} className={`track-step${i <= stepIdx ? ' done' : ''}${i === stepIdx ? ' current' : ''}`}>
+                <div className="track-dot" />
+                <span className="track-step-label">{STATUS_LABELS[status]}</span>
+              </div>
+            ))}
+            <div className="track-fill"
+              style={{ width: `${stepIdx < 0 ? 0 : (stepIdx / (STATUS_ORDER.length - 1)) * 100}%` }} />
+          </div>
 
-      <section className="track-map-wrapper">
-        <div className="map-card">
-          {route.length ? (
-            <MapContainer
-              center={route[0]}
-              zoom={11}
-              scrollWheelZoom={false}
-              className="map"
-            >
-              <TileLayer
-                attribution="&copy; OpenStreetMap contributors"
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              />
-              <Polyline positions={route} pathOptions={{ color: '#4f46e5' }} />
-              <Marker position={route[0]} />
-              <Marker position={route[route.length - 1]} />
-              <Marker position={activePosition} />
-            </MapContainer>
-          ) : (
-            <div className="map-empty">
-              <p className="title">No live positions yet</p>
-              <p className="meta">Track an ID to load current rider GPS points.</p>
+          {shipment.eta && (
+            <div className="track-eta">
+              Estimated delivery: <strong>{new Date(shipment.eta).toLocaleString()}</strong>
             </div>
           )}
+
+          {livePos && (
+            <div className="track-live">
+              <span className="live-dot" /> Live — last update {new Date(livePos.at).toLocaleTimeString()}
+              {livePos.speedKph != null && ` · ${livePos.speedKph.toFixed(0)} km/h`}
+            </div>
+          )}
+
+          <div className="track-timeline">
+            <h3>Shipment history</h3>
+            <ul className="timeline-list">
+              {[...shipment.events].reverse().map((evt, i) => (
+                <li key={i} className={`timeline-item${i === 0 ? ' latest' : ''}`}>
+                  <div className="timeline-marker" />
+                  <div className="timeline-body">
+                    <div className="timeline-label">{evt.label}</div>
+                    {evt.message && <div className="timeline-msg">{evt.message}</div>}
+                    <div className="timeline-meta">
+                      {evt.location && <span>{evt.location}</span>}
+                      <span>{new Date(evt.at).toLocaleString()}</span>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
-        <div className="map-legend">
-          <p className="label">Live movement</p>
-          <p className="meta">
-            {route.length
-              ? `Showing ${route.length} GPS points from your backend.`
-              : 'Waiting for live GPS points.'}
-          </p>
-        </div>
-      </section>
+      )}
     </div>
   )
 }
-
