@@ -365,7 +365,6 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true })
 })
 
-app.listen(PORT, () => {
-  console.log(`Shipgoe backend listening on http://localhost:${PORT}`)
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Shipgoe API running on 0.0.0.0:${PORT}`)
 })
-
